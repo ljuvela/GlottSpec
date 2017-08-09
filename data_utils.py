@@ -146,20 +146,18 @@ class nc_data_provider:
         return self
 
     def next(self):
-        if self.i >= len(self.file_list):
+        if (self.i >= len(self.file_list)) or (self.i >= self.max_files):
             raise StopIteration
         else:
             if self.input_only:
                 in_data = load_test_data([self.file_list[self.i]], self.data_dir, 
-                                         context_len=self.context_len,
-                                         num_files=self.max_files)
+                                         context_len=self.context_len)
                 self.in_data = in_data
                 self.i += 1
                 return self.in_data
             else:
                 out_data, in_data, _, _ = load_data([self.file_list[self.i]], self.data_dir,
-                                                    context_len=self.context_len,
-                                                    num_files=self.max_files)
+                                                    context_len=self.context_len)
                 self.out_data = out_data
                 self.in_data = in_data
                 self.i += 1

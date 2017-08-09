@@ -160,7 +160,7 @@ def plot_feats(generated_feats, epoch, index, ext=''):
     plt.figure()
     for row in generated_feats:
         plt.plot(row)
-    plt.savefig('figures/mean_pulse_epoch{}_index{}'.format(epoch, index) + ext + '.png')
+    plt.savefig('figures/sample_spectra_epoch{}_index{}'.format(epoch, index) + ext + '.png')
     plt.close()
 
 def train_model(BATCH_SIZE, data_dir, file_list, context_len=32, max_files=30):
@@ -169,7 +169,7 @@ def train_model(BATCH_SIZE, data_dir, file_list, context_len=32, max_files=30):
     timesteps = context_len
 
     optim = adam(lr=0.0001)
-    model = glot_spec_model()
+    model = glot_spec_model(timesteps=timesteps, input_dim=48, output_dim=fbins)
     model.compile(loss=['mse'], loss_weights=[1.0], optimizer=optim) 
 
     fft_mod = fft_model()
@@ -178,7 +178,6 @@ def train_model(BATCH_SIZE, data_dir, file_list, context_len=32, max_files=30):
     no_epochs = 40
     max_epochs_no_improvement = 5
 
-    import ipdb; ipdb.set_trace()
 
     patience = max_epochs_no_improvement
     best_val_loss = 1e20
@@ -193,7 +192,7 @@ def train_model(BATCH_SIZE, data_dir, file_list, context_len=32, max_files=30):
             if len(val_data) == 0:
                 val_data = data
                 continue
-
+                
             X_train = data[0]
             Y_train = data[1]
 
@@ -212,10 +211,13 @@ def train_model(BATCH_SIZE, data_dir, file_list, context_len=32, max_files=30):
 
                 # simple log magnitude here, maybe do something smarter?
                 x_feats_batch_fft = fft_mod.predict(x_feats_batch)
-                x_feats_vatch_fft = 10*np.log10(x_feats_batch_fft)
+                x_feats_batch_fft = 10*np.log10(x_feats_batch_fft)
 
                 d = model.train_on_batch([y_feats_batch],
                                          [x_feats_batch_fft])
+
+                #import ipdb; ipdb.set_trace()
+    
                     
                 print("training batch %d, loss: %f" %
                       (index+total_batches, d))
@@ -232,9 +234,8 @@ def train_model(BATCH_SIZE, data_dir, file_list, context_len=32, max_files=30):
                     
             total_batches += no_batches
 
-        epoch_error[0] /= total_batches
-        epoch_error[1] /= total_batches
-
+        epoch_error /= total_batches
+    
         val_spec = fft_mod.predict(val_data[0])
         val_spec = 10.0*np.log10(val_spec)
         val_loss = model.evaluate([val_data[1]],
@@ -247,10 +248,11 @@ def train_model(BATCH_SIZE, data_dir, file_list, context_len=32, max_files=30):
         print("epoch %d training loss: %f \n" %
               (epoch, epoch_error))
 
-        # only on wave loss (why not both?)
-        if val_loss[0] < best_val_loss:
-            best_val_loss = val_loss[0]
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
             patience = max_epochs_no_improvement
+            print ("New best model at epoch %d" % (epoch))
             model.save_weights('./pulse_spec.model')
         else:
             patience -= 1
@@ -260,30 +262,24 @@ def train_model(BATCH_SIZE, data_dir, file_list, context_len=32, max_files=30):
 
     print "Finished training" 
 
-def generate(file_list, data_dir, output_dir):
+def generate(file_list, data_dir, output_dir, context_len=32, max_files=1):
     
-    pulse_model = time_glot_model()
-    gan_model = generator()
+    model = glot_spec_model(timesteps=context_len, input_dim=48, output_dim=fbins)
+
+    model.compile(loss='mse', optimizer="adam")
     
-    pulse_model.compile(loss='mse', optimizer="adam")
-    gan_model.compile(loss='mse', optimizer="adam")
+    model.load_weights('./pulse_spec.model')
 
-    pulse_model.load_weights('./pls.model')
-    gan_model.load_weights('./noise_gen.model')
-
-    for data in nc_data_provider(file_list, data_dir, input_only=True):
+    for data in nc_data_provider(file_list, data_dir, input_only=True,
+                                 context_len=context_len, max_files=max_files):
+        
         for fname, ac_data in data.iteritems():
             print fname
-            
-            pls_pred, _ = pulse_model.predict([ac_data])
-            noise = np.random.randn(pls_pred.shape[0], pls_pred.shape[1])
-            pls_gan = gan_model.predict([pls_pred, noise])
-            
-            out_file = os.path.join(args.output_dir, fname + '.pls')
-            pls_gan.astype(np.float32).tofile(out_file)
+            spec_pred = model.predict([ac_data])
+            out_file = os.path.join(args.output_dir, fname + '.spec')
+            spec_pred.astype(np.float32).tofile(out_file)
 
-            out_file = os.path.join(args.output_dir, fname + '.pls_nonoise')
-            pls_pred.astype(np.float32).tofile(out_file)
+           
     
 def get_args():
     parser = argparse.ArgumentParser()
@@ -296,7 +292,7 @@ def get_args():
     parser.add_argument("--output_dir", type=str,
                         default="./output")
     parser.add_argument("--rnn_context_len", type=int, default=32)
-    parser.add_argument("--max_files", type=int, default=30)
+    parser.add_argument("--max_files", type=int, default=100)
     parser.set_defaults(nice=False)
     args = parser.parse_args()
     return args
@@ -318,6 +314,8 @@ if __name__ == "__main__":
         file_list = os.listdir(test_dir)
 
         generate(data_dir=test_dir, file_list=file_list,
-                 output_dir=args.output_dir)
+                 output_dir=args.output_dir,
+                 max_files=args.max_files,
+                 context_len=args.rnn_context_len)
 
     
